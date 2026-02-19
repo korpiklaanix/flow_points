@@ -1,6 +1,17 @@
-# flow_points
+# 🎮 Flow Points
 
-A new Flutter project.
+Un jeu Flutter inspiré de Flow Free.
+
+## 🚀 Stack
+- Flutter
+- Dart
+- Material 3
+
+## 📱 Features
+- Système de niveaux
+- Validation de chemins
+- Progression sauvegardée
+
 
 ## Getting Started
 
