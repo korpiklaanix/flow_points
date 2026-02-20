@@ -2,7 +2,9 @@ import 'dart:io';
 import 'dart:math';
 
 /// dart run tool/gen_levels.dart
-
+/// ou /c/flutter/flutter_windows_3.41.1-stable/flutter/bin/flutter run -t tool/gen_levels.dart
+/// Génère des niveaux procéduralement et les écrit dans lib/game/data/levels.dart
+///
 class PairDef {
   final int colorId;
   final Point<int> a;

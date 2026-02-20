@@ -38,7 +38,7 @@ class _FlowGamePageState extends State<FlowGamePage> {
   int hints = 0;
   int solves = 0;
 
-  int? _hintColorId; // visuel highlight endpoints
+  int? _hintColorId;
   bool _usingPower = false;
 
   bool _usedSolveThisLevel = false; // => récompense 0
@@ -49,11 +49,10 @@ class _FlowGamePageState extends State<FlowGamePage> {
   Level get level => levels[levelIndex];
   int get n => level.size;
 
-  late List<List<int>> boardOcc; // [x][y] = colorId ou -1
+  late List<List<int>> boardOcc;
   static const int _empty = -1;
   static const int _blocked = -2;
-  final Map<int, List<Point<int>>> paths =
-      {}; // colorId -> path (sans endpoints)
+  final Map<int, List<Point<int>>> paths = {};
 
   int? drawingColorId;
   List<Point<int>> currentPath = [];
@@ -133,7 +132,8 @@ class _FlowGamePageState extends State<FlowGamePage> {
   }
 
   void _clearPath(int colorId) {
-    // Efface toutes les cases de cette couleur (sauf endpoints et obstacles).
+    // Efface TOUTES les cases de cette couleur sur la grille
+    // (sauf endpoints et obstacles)
     for (int x = 0; x < n; x++) {
       for (int y = 0; y < n; y++) {
         final cell = Point<int>(x, y);
@@ -143,11 +143,11 @@ class _FlowGamePageState extends State<FlowGamePage> {
       }
     }
 
-    // on reset le path mémoire
+    // on reset
     paths[colorId] = [];
   }
 
-  /// Applique la solution d'une couleur (chemin complet A→B depuis level.solution).
+  /// applique la solution d'une couleur
   void _applyColorSolution(int colorId) {
     final sol = level.solution[colorId];
     if (sol == null || sol.length < 2) return;
@@ -171,10 +171,13 @@ class _FlowGamePageState extends State<FlowGamePage> {
   }
 
   bool get _isSolved {
+    //  ne jamais valider pendant un tracé
     if (drawingColorId != null) return false;
 
+    //  si full fill requis, on le vérifie en premier
     if (level.requireFullFill && !_isBoardFilledIfRequired()) return false;
 
+    // puis on vérifie les connexions
     for (final p in level.pairs) {
       if (!_hasConnection(p.colorId)) return false;
     }
@@ -257,6 +260,8 @@ class _FlowGamePageState extends State<FlowGamePage> {
     final last = currentPath.last;
     if (cell == last) return;
 
+    //  si on a déjà fini (on est sur l'autre endpoint), on ne continue pas
+    // (normalement drawingColorId sera null si on auto-finish, mais sécurité)
     final start = currentPath.first;
     if (_isEndpoint(last, cid) && last != start) return;
 
@@ -283,6 +288,7 @@ class _FlowGamePageState extends State<FlowGamePage> {
     // on remplit la case si ce n'est pas un endpoint
     if (!_isEndpoint(cell, cid)) _setOcc(cell, cid);
 
+    //  si on vient d'atteindre l'autre endpoint  on STOP immédiatement
     if (_isEndpoint(cell, cid) && cell != start) {
       paths[cid] = currentPath.where((c) => !_isEndpoint(c, cid)).toList();
       drawingColorId = null;
@@ -314,7 +320,7 @@ class _FlowGamePageState extends State<FlowGamePage> {
           _setOcc(cell, _empty);
         }
       }
-      paths[cid] = [];
+      paths[cid] = []; // mémoire cohérente
     }
 
     drawingColorId = null;
@@ -324,8 +330,9 @@ class _FlowGamePageState extends State<FlowGamePage> {
 
   void _reset() => _loadLevel(levelIndex);
 
-  // Récompense uniquement à la première complétion.
-  // Solve utilisé → 0 coins. Hint utilisé → _baseReward / 2.
+  ///  Coins uniquement si niveau jamais complété.
+  /// - si Solve utilisé => 0
+  /// - si Hint utilisé => _baseReward/2
   Future<void> _rewardIfEligible() async {
     final alreadyCompleted = await GameProgress.isLevelCompleted(levelIndex);
     if (alreadyCompleted) return;
@@ -379,6 +386,9 @@ class _FlowGamePageState extends State<FlowGamePage> {
     if (mounted) setState(() {});
   }
 
+  /// ============================================================
+  /// BOUTIQUE DANS LE NIVEAU
+  /// ============================================================
   Future<void> _openHelpShop() async {
     if (!mounted) return;
 
@@ -572,7 +582,7 @@ class _FlowGamePageState extends State<FlowGamePage> {
     return haveAfter > 0;
   }
 
-  /// Complète une couleur automatiquement (indice).
+  /// Indice = complète UNE couleur
   Future<void> _useHintInGame() async {
     if (_usingPower) return;
     _usingPower = true;
@@ -613,7 +623,7 @@ class _FlowGamePageState extends State<FlowGamePage> {
     setState(() {});
   }
 
-  /// Complète tout le niveau automatiquement (solution).
+  /// Solution = complète tout le niveau
   Future<void> _useSolveInGame() async {
     if (_usingPower) return;
     _usingPower = true;
@@ -796,6 +806,9 @@ class _FlowGamePageState extends State<FlowGamePage> {
   }
 }
 
+/// ------------------------------------------------------------
+/// AppBar
+/// ------------------------------------------------------------
 class _GameAppBar extends StatelessWidget implements PreferredSizeWidget {
   final int coins;
   final String title;
@@ -928,6 +941,9 @@ class _CoinsPill extends StatelessWidget {
   }
 }
 
+/// ------------------------------------------------------------
+/// Barre de statut des connexions
+/// ------------------------------------------------------------
 class _ConnectionsBar extends StatelessWidget {
   final List<Pair> pairs;
   final List<Color> palette;
@@ -979,10 +995,7 @@ class _StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 7,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
         color: AppColors.chipBg.withOpacity(0.80),
         borderRadius: BorderRadius.circular(999),
@@ -1025,6 +1038,9 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
+/// ------------------------------------------------------------
+/// Bouton "Suivant"
+/// ------------------------------------------------------------
 class _NextButton extends StatelessWidget {
   final VoidCallback onTap;
   final bool enabled;
@@ -1038,6 +1054,7 @@ class _NextButton extends StatelessWidget {
         : LinearGradient(colors: [AppColors.surface2, AppColors.surface]);
 
     final fg = enabled ? AppColors.textPrimary : AppColors.textHint;
+
     return Opacity(
       opacity: enabled ? 1.0 : 0.55,
       child: Container(
@@ -1082,6 +1099,9 @@ class _NextButton extends StatelessWidget {
   }
 }
 
+/// ------------------------------------------------------------
+/// Painter
+/// ------------------------------------------------------------
 class _BoardPainter extends CustomPainter {
   final int n;
   final List<Pair> pairs;
@@ -1136,6 +1156,7 @@ class _BoardPainter extends CustomPainter {
       );
     }
 
+    // cases occupées
     for (int x = 0; x < n; x++) {
       for (int y = 0; y < n; y++) {
         final cid = occ[x][y];
@@ -1158,6 +1179,7 @@ class _BoardPainter extends CustomPainter {
       }
     }
 
+    // endpoints
     for (final p in pairs) {
       final c = palette[p.colorId % palette.length];
 
@@ -1217,6 +1239,9 @@ class _CountBadge extends StatelessWidget {
   }
 }
 
+/// ------------------------------------------------------------
+/// Tuile d'achat
+/// ------------------------------------------------------------
 class _HelpBuyTile extends StatelessWidget {
   final IconData icon;
   final String title;

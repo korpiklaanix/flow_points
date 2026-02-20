@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  // ============================================================
-  // 🎀 Vintage Coral Scheme (adapté Flow Points)
-  // ============================================================
-
   // Palette source
   static const sweetSalmon = Color.fromARGB(255, 180, 114, 109);
   static const desertSand = Color(0xFFE6B89C);
@@ -15,30 +11,21 @@ class AppColors {
   // Seed Material
   static const seed = steelBlue;
 
-  // ============================================================
-  // 🌑 Background (plus foncé pour reposer les yeux)
-  // ============================================================
-
-  static const background = Color.fromARGB(
-    255,
-    20,
-    29,
-    33,
-  ); // bleu gris profond
+  static const background = Color.fromARGB(255, 20, 29, 33);
 
   // Texte
   static const textPrimary = Color.fromARGB(255, 255, 237, 209); // crème chaud
   static const textHint = Color.fromARGB(255, 255, 221, 199);
 
   // ============================================================
-  // 🧱 Surfaces
+  //  Surfaces
   // ============================================================
 
   static const surface = Color(0xFF2F4753); // bleu acier profond
   static const surface2 = Color(0xFF3D5E6D); // un peu plus clair
 
   // ============================================================
-  // 🎮 Game Board
+  //  Game Board
   // ============================================================
 
   static const boardBg = Color(0xFF2B414C);
@@ -52,7 +39,7 @@ class AppColors {
   static const chipShadow = Color.fromARGB(30, 0, 0, 0);
 
   // ============================================================
-  // 🎀 Accents
+  //  Accents
   // ============================================================
 
   // Bouton principal
@@ -65,7 +52,7 @@ class AppColors {
   static const accentSoft = desertSand;
 
   // ============================================================
-  // 🎮 PALETTE ENDPOINTS (INCHANGÉE)
+  //  PALETTE ENDPOINTS
   // ============================================================
 
   static const palette = <Color>[
