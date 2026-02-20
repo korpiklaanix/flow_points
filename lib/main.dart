@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'game/flow_game_page.dart';
 import 'package:flow_points/game/home_page.dart';
-
+import 'package:flow_points/theme/app_colors.dart';
 
 void main() => runApp(const FlowPointsApp());
 
@@ -29,7 +28,7 @@ class FlowPointsApp extends StatelessWidget {
           centerTitle: true,
         ),
       ),
-home: const HomePage(),
+      home: const HomePage(),
     );
   }
 }

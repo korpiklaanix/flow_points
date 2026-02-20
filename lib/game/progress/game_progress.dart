@@ -8,8 +8,8 @@ class GameProgress {
   static const _kSolveCount = "solveCount";
   static const _kSkipCount = "skipCount";
 
-  // ✅ NOUVEAU: niveaux déjà complétés (pour empêcher les coins en replay)
-  static const _kCompletedLevels = "completedLevels"; // stocké en StringList
+  // niveaux complétés : empêche de regagner des coins en replay
+  static const _kCompletedLevels = "completedLevels";
 
   static Future<int> getUnlockedLevel() async {
     final prefs = await SharedPreferences.getInstance();
@@ -136,7 +136,6 @@ class GameProgress {
     await prefs.setInt(_kSolveCount, 0);
     await prefs.setInt(_kSkipCount, 0);
 
-    // ✅ reset aussi les niveaux complétés
     await prefs.remove(_kCompletedLevels);
   }
 }

@@ -3,6 +3,7 @@ import 'package:flow_points/game/flow_game_page.dart';
 import 'package:flow_points/game/progress/game_progress.dart';
 import 'package:flow_points/game/levels/levels_library_page.dart';
 import 'package:flow_points/game/data/levels.dart';
+import 'package:flow_points/theme/app_colors.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,7 +17,6 @@ class _HomePageState extends State<HomePage> {
   int coins = 0;
   int hints = 0;
   int solves = 0;
-  int skips = 0;
 
   @override
   void initState() {
@@ -29,7 +29,6 @@ class _HomePageState extends State<HomePage> {
     coins = await GameProgress.getCoins();
     hints = await GameProgress.getHintCount();
     solves = await GameProgress.getSolveCount();
-    skips = await GameProgress.getSkipCount();
     if (mounted) setState(() {});
   }
 
@@ -69,15 +68,20 @@ class _HomePageState extends State<HomePage> {
     if (!ok) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Pas assez de points 😅")),
+        SnackBar(
+          backgroundColor: AppColors.surface,
+          content: const Text("Pas assez de points 😅"),
+        ),
       );
       return;
     }
+
     await addItem(1);
     await _refresh();
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(okMsg)),
+      SnackBar(backgroundColor: AppColors.surface, content: Text(okMsg)),
     );
   }
 
@@ -85,9 +89,34 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final total = LevelsData.levels.length;
 
+    final filledBtnStyle = FilledButton.styleFrom(
+      minimumSize: const Size.fromHeight(60),
+      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
+      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      backgroundColor: AppColors.accent,
+      foregroundColor: AppColors.text,
+    );
+
+    final outlinedBtnStyle = OutlinedButton.styleFrom(
+      minimumSize: const Size.fromHeight(60),
+      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
+      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      foregroundColor: AppColors.accent,
+      side: const BorderSide(color: AppColors.accent, width: 2),
+    );
+
     return Scaffold(
+      backgroundColor: AppColors.bg,
       appBar: AppBar(
-        title: const Text("Flow Points"),
+        backgroundColor: AppColors.bg,
+        foregroundColor: AppColors.text,
+        elevation: 0,
+        title: const Text(
+          "Flow Points",
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
         actions: [
           IconButton(
             tooltip: "Rafraîchir",
@@ -100,7 +129,6 @@ class _HomePageState extends State<HomePage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Header stats
             Row(
               children: [
                 Expanded(
@@ -121,31 +149,35 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
             const SizedBox(height: 12),
+
             Row(
               children: [
-                Expanded(child: _MiniInv(label: "Indices", value: hints)),
+                Expanded(
+                  child: _MiniInv(label: "Indices", value: hints),
+                ),
                 const SizedBox(width: 10),
-                Expanded(child: _MiniInv(label: "Solutions", value: solves)),
-                const SizedBox(width: 10),
-                Expanded(child: _MiniInv(label: "Pass", value: skips)),
+                Expanded(
+                  child: _MiniInv(label: "Solutions", value: solves),
+                ),
               ],
             ),
 
             const SizedBox(height: 18),
 
-            // CTA
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
+                style: filledBtnStyle,
                 onPressed: () => _openGame(levelIndex: unlocked),
-                icon: const Icon(Icons.play_arrow_rounded),
                 label: const Text("Commencer"),
+                icon: const Icon(Icons.play_arrow_rounded),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
+                style: outlinedBtnStyle,
                 onPressed: _openLibrary,
                 icon: const Icon(Icons.grid_view_rounded),
                 label: const Text("Bibliothèque des niveaux"),
@@ -154,12 +186,15 @@ class _HomePageState extends State<HomePage> {
 
             const SizedBox(height: 22),
 
-            // Shop (simple)
-            Align(
-              alignment: Alignment.centerLeft,
+            Center(
               child: Text(
                 "Boutique",
-                style: Theme.of(context).textTheme.titleMedium,
+                style: const TextStyle(
+                  color: AppColors.text,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.2,
+                ),
               ),
             ),
             const SizedBox(height: 10),
@@ -167,9 +202,9 @@ class _HomePageState extends State<HomePage> {
             _ShopRow(
               title: "Indice (+1)",
               subtitle: "Surligne une couleur à commencer",
-              price: 50,
+              price: 150,
               onBuy: () => _buy(
-                price: 50,
+                price: 150,
                 addItem: GameProgress.addHints,
                 okMsg: "Indice ajouté ✅",
               ),
@@ -177,28 +212,19 @@ class _HomePageState extends State<HomePage> {
             _ShopRow(
               title: "Solution (+1)",
               subtitle: "Affiche une solution (niveau complet)",
-              price: 200,
+              price: 400,
               onBuy: () => _buy(
-                price: 200,
+                price: 400,
                 addItem: GameProgress.addSolves,
                 okMsg: "Solution ajoutée ✅",
               ),
             ),
-            _ShopRow(
-              title: "Passer un niveau (+1)",
-              subtitle: "Débloque le niveau suivant",
-              price: 300,
-              onBuy: () => _buy(
-                price: 300,
-                addItem: GameProgress.addSkips,
-                okMsg: "Pass ajouté ✅",
-              ),
-            ),
 
             const Spacer(),
-            Text(
+            const Text(
               "Astuce: tu gagnes des points quand tu réussis un niveau ✨",
-              style: Theme.of(context).textTheme.bodySmall,
+              style: TextStyle(color: AppColors.textMuted),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -211,23 +237,37 @@ class _StatCard extends StatelessWidget {
   final String title;
   final String value;
   final IconData icon;
-  const _StatCard({required this.title, required this.value, required this.icon});
+  const _StatCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Card(
+      color: AppColors.surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(
           children: [
-            Icon(icon),
+            Icon(icon, color: AppColors.accent),
             const SizedBox(width: 12),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: Theme.of(context).textTheme.bodySmall),
+                Text(title, style: const TextStyle(color: AppColors.textMuted)),
                 const SizedBox(height: 4),
-                Text(value, style: Theme.of(context).textTheme.titleLarge),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: AppColors.text,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
               ],
             ),
           ],
@@ -245,12 +285,26 @@ class _MiniInv extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      color: AppColors.surface2,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         child: Row(
           children: [
-            Expanded(child: Text(label)),
-            Text("$value", style: const TextStyle(fontWeight: FontWeight.w800)),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(color: AppColors.textMuted),
+              ),
+            ),
+            Text(
+              "$value",
+              style: const TextStyle(
+                color: AppColors.text,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ],
         ),
       ),
@@ -274,11 +328,32 @@ class _ShopRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      color: AppColors.surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ListTile(
-        title: Text(title),
-        subtitle: Text(subtitle),
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: AppColors.text,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(color: AppColors.textMuted),
+        ),
         trailing: FilledButton(
           onPressed: onBuy,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.accent2,
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            textStyle: const TextStyle(fontWeight: FontWeight.w900),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
           child: Text("$price"),
         ),
       ),
