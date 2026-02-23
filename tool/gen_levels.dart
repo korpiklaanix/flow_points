@@ -1,30 +1,23 @@
 // tool/gen_levels.dart
+import 'dart:collection';
 import 'dart:io';
 import 'dart:math';
 
 /// ============================================================================
-/// Générateur FLOW / Numberlink FULL-FILL (TOUJOURS solvable + rapide + varié)
-/// ============================================================================
-/// Je lance :
-///   dart run tool/gen_levels.dart
+/// FLOW v3.4 — Générateur STABLE (évite le ramage dès 6x6)
+/// dart run tool/gen_levels.dart
+/// Objectifs:
+/// - Niveaux toujours solvables (BFS robuste, + option “drunk walk” pour variété)
+/// - Endpoints jamais adjacents (distance manhattan >= 2)
+/// - FullFill = DÉDUIT de la solution (pas tiré au hasard)
+/// - Anti-doublons robuste : pairs + blocked + min sur 8 symétries
 ///
-/// Principe :
-/// - Je construis une "solution" complète en partant d'un chemin Hamiltonien
-///   (visite toutes les cases exactement une fois).
-/// - Je RANDOMISE ce chemin très fortement via BACKBITE (rapide, sans DFS).
-/// - Je découpe le chemin en segments contigus => chaque segment = une couleur.
-/// - Endpoints = début/fin du segment ; solution[color] = segment complet.
-/// - FULL-FILL : toutes les cases sont couvertes.
-///
-/// Sécurités intégrées :
-/// - Je valide que le chemin est correct (adjacent case à case)
-/// - Je refuse endpoints adjacents (trop trivial)
-/// - Je vérifie que la solution couvre toutes les cases exactement 1 fois
-///
-/// Résultat :
-/// - Plus de freeze en 7x7/8x8
-/// - Plus de niveaux "biscornus" (backbite casse l'alignement)
-/// - Plus de niveaux insolvables (sauts impossibles)
+/// Changements clés vs v3.3:
+/// - Sur 6x6+ : on évite les obstacles (taux d’échec énorme sinon)
+/// - On choisit D’ABORD toutes les paires d’endpoints, puis on route
+///   les plus longues en premier (réduit fortement les situations “grille coupée”)
+/// - Sur 6x6+ : BFS d’abord (rapide + stable), puis petite touche “drunk” si besoin
+/// - Budget/attempts raisonnables + logs de progression
 /// ============================================================================
 
 class PairDef {
@@ -55,65 +48,140 @@ class Stage {
   final int colorsMin;
   final int colorsMax;
   final int count;
+  final double spice;
+
+  /// 0..1 : “préférence” de fullfill (soft target)
+  final double fullFillTarget;
+
   const Stage({
     required this.size,
     required this.colorsMin,
     required this.colorsMax,
     required this.count,
+    required this.spice,
+    required this.fullFillTarget,
   });
 }
 
-const int kSeed = 42;
+const int kMasterSeed = 42;
 
-/// 👉 Tu peux enlever le 2e stage 3x3 si tu veux, ça ne casse rien.
-/// Le target est recalculé automatiquement.
 final stages = <Stage>[
-  Stage(size: 3, colorsMin: 2, colorsMax: 2, count: 5),
-  // Stage(size: 3, colorsMin: 3, colorsMax: 3, count: 5),
-  Stage(size: 4, colorsMin: 3, colorsMax: 4, count: 20),
-  Stage(size: 4, colorsMin: 4, colorsMax: 5, count: 20),
-  Stage(size: 5, colorsMin: 4, colorsMax: 6, count: 30),
-  Stage(size: 5, colorsMin: 5, colorsMax: 7, count: 30),
-  Stage(size: 6, colorsMin: 5, colorsMax: 7, count: 35),
-  Stage(size: 6, colorsMin: 6, colorsMax: 8, count: 35),
-  Stage(size: 7, colorsMin: 6, colorsMax: 8, count: 30),
-  Stage(size: 7, colorsMin: 7, colorsMax: 9, count: 30),
-  Stage(size: 8, colorsMin: 7, colorsMax: 9, count: 30),
-  Stage(size: 8, colorsMin: 8, colorsMax: 10, count: 30),
+  Stage(
+    size: 3,
+    colorsMin: 2,
+    colorsMax: 3,
+    count: 4,
+    spice: 0.10,
+    fullFillTarget: 0.0,
+  ),
+  Stage(
+    size: 4,
+    colorsMin: 3,
+    colorsMax: 5,
+    count: 22,
+    spice: 0.28,
+    fullFillTarget: 0.0,
+  ),
+  Stage(
+    size: 5,
+    colorsMin: 3,
+    colorsMax: 5,
+    count: 40,
+    spice: 0.38,
+    fullFillTarget: 0.15,
+  ),
+  Stage(
+    size: 6,
+    colorsMin: 4,
+    colorsMax: 6,
+    count: 45,
+    spice: 0.65,
+    fullFillTarget: 0.0,
+  ),
+  Stage(
+    size: 7,
+    colorsMin: 5,
+    colorsMax: 7,
+    count: 50,
+    spice: 0.82,
+    fullFillTarget: 0.0,
+  ),
+  Stage(
+    size: 8,
+    colorsMin: 6,
+    colorsMax: 8,
+    count: 54,
+    spice: 0.98,
+    fullFillTarget: 0.0,
+  ),
 ];
 
 void main() {
-  final rng = Random(kSeed);
+  final masterRng = Random(kMasterSeed);
   final all = <LevelDef>[];
-  final totalTarget = stages.fold<int>(0, (s, st) => s + st.count);
+  final seenFingerprints = <String>{};
 
-  stdout.writeln("=== FLOW GEN target=$totalTarget seed=$kSeed ===");
+  final totalTarget = stages.fold<int>(0, (s, st) => s + st.count);
+  stdout.writeln(
+    "=== FLOW GEN v3.4 target=$totalTarget masterSeed=$kMasterSeed ===",
+  );
 
   for (final st in stages) {
-    stdout.writeln("-> generating stage size=${st.size} count=${st.count}");
+    stdout.writeln(
+      "-> stage size=${st.size} count=${st.count} targetFull=${st.fullFillTarget.toStringAsFixed(2)}",
+    );
 
     int made = 0;
+    int dupRejected = 0;
     int printed = 0;
 
-    for (int i = 0; i < st.count; i++) {
-      final level = _generateOneLevel(rng, st);
-      if (level != null) {
-        all.add(level);
-        made++;
-      } else {
-        // Si ça arrive souvent, c'est que les contraintes sont trop strictes.
-        // Ici c'est rare, mais on laisse le log possible pour debug.
-        // stdout.writeln("  warn: failed to generate one level for size=${st.size}");
+    final levelSeedBase = masterRng.nextInt(1 << 30);
+
+    // Budget d'essais par stage (plus haut sur petites tailles)
+    final budget = switch (st.size) {
+      3 => st.count * 2000,
+      4 => st.count * 1200,
+      5 => st.count * 900,
+      _ => st.count * 900,
+    };
+
+    for (int i = 0; i < budget && made < st.count; i++) {
+      if (i % 500 == 0 && made < st.count && i > 0) {
+        stdout.writeln(
+          "  ... size=${st.size} tries=$i made=$made dup=$dupRejected",
+        );
       }
+
+      final levelRng = Random(levelSeedBase + i * 997 + st.size * 10007);
+      final result = _generateOneLevel(levelRng, st);
+      if (result == null) continue;
+
+      final (level, fp) = result;
+      if (seenFingerprints.contains(fp)) {
+        dupRejected++;
+        continue;
+      }
+
+      seenFingerprints.add(fp);
+      all.add(level);
+      made++;
 
       if (st.count >= 20 && made >= printed + 5) {
         printed = made;
-        stdout.writeln("  ... size=${st.size} progress $made/${st.count}");
+        stdout.writeln(
+          "  ... size=${st.size} $made/${st.count} (dup=$dupRejected)",
+        );
       }
     }
 
+    if (made < st.count) {
+      stdout.writeln(
+        "⚠️ Stage size=${st.size} incomplet: $made/${st.count}. Contraintes trop dures / budget insuffisant.",
+      );
+    }
+
     stdout.writeln(
-      "size=${st.size} colors=[${st.colorsMin}-${st.colorsMax}] -> +$made (total ${all.length}/$totalTarget)",
+      "size=${st.size} -> +$made niveaux, $dupRejected doublons rejetés (total ${all.length}/$totalTarget)",
     );
   }
 
@@ -122,269 +190,539 @@ void main() {
 }
 
 /// ============================================================================
-/// Génération d’un niveau
+/// Génération d'un niveau
+/// - fullfill DÉDUIT
+/// - endpoints choisis d’abord, routing des plus longues d’abord
 /// ============================================================================
-LevelDef? _generateOneLevel(Random rng, Stage st) {
+(LevelDef, String)? _generateOneLevel(Random rng, Stage st) {
   final n = st.size;
+  final spice = st.spice.clamp(0.0, 1.0);
 
-  // Avec backbite + validations, ça sort vite.
-  for (int attempt = 0; attempt < 3000; attempt++) {
-    final ham = _randomHamiltonianPathBackbite(rng, n);
+  // Moins d'essais quand on ne force pas le fullfill
+  final baseAttempts = st.fullFillTarget <= 0 ? 220 : 520;
+  final extra = (st.fullFillTarget * 350).round();
+  final maxAttempts = baseAttempts + extra;
 
-    // sécurité : ham doit être un vrai chemin sur la grille
-    if (!_isValidPath(ham, n)) continue;
-
-    final level = _trySegmentationOnHam(rng, ham, st);
-    if (level != null) return level;
+  bool preferFullFillNow(int attempt) {
+    if (st.fullFillTarget <= 0) return false;
+    final t = attempt / maxAttempts;
+    if (t > 0.60) return false;
+    return rng.nextDouble() < st.fullFillTarget;
   }
 
-  return null;
-}
+  for (int attempt = 0; attempt < maxAttempts; attempt++) {
+    final blocked = _genBlocked(rng, n, spice);
 
-LevelDef? _trySegmentationOnHam(Random rng, List<Point<int>> ham, Stage st) {
-  final n = st.size;
+    final freeCells = n * n - blocked.length;
+    if (freeCells < 8) continue;
 
-  final minLen = _minSegmentLen(n);
-  final kMax = ham.length ~/ minLen;
+    // Heuristique faisabilité (disjoint + détours)
+    final maxColorsFeasible = (freeCells / 3).floor().clamp(2, 10);
 
-  final desiredK = st.colorsMin + rng.nextInt(st.colorsMax - st.colorsMin + 1);
-  final k = desiredK.clamp(2, kMax);
+    final kRaw = _randInt(rng, st.colorsMin, st.colorsMax);
+    final k = kRaw
+        .clamp(st.colorsMin, min(st.colorsMax, maxColorsFeasible))
+        .toInt();
+    if (k < 2) continue;
 
-  // Je tente plusieurs découpes sur le même ham (rapide)
-  for (int cutTry = 0; cutTry < 250; cutTry++) {
-    final sizes = _makeSegmentSizes(
-      rng,
-      total: ham.length,
-      k: k,
-      minLen: minLen,
-    );
+    // 1) Choisir toutes les paires d'endpoints d’abord
+    final reserved = <Point<int>>{...blocked};
+    final endpoints = <(Point<int>, Point<int>)>[];
 
-    final segs = <List<Point<int>>>[];
-    int cursor = 0;
-    for (final len in sizes) {
-      segs.add(ham.sublist(cursor, cursor + len));
-      cursor += len;
-    }
+    bool endpointsOk = true;
+    for (int cid = 0; cid < k; cid++) {
+      final ep = _pickEndpoints(rng, n, reserved, minDist: _minEndpointDist(n));
+      if (ep == null) {
+        endpointsOk = false;
+        break;
+      }
 
-    // Endpoints non adjacents (anti-trivial)
-    bool ok = true;
-    for (final seg in segs) {
-      final a = seg.first;
-      final b = seg.last;
+      final (a, b) = ep;
       final man = (a.x - b.x).abs() + (a.y - b.y).abs();
       if (man < 2) {
+        endpointsOk = false;
+        break;
+      }
+
+      reserved.add(a);
+      reserved.add(b);
+      endpoints.add((a, b));
+    }
+    if (!endpointsOk) continue;
+
+    // 2) Router les plus longues d'abord
+    final order = List.generate(k, (i) => i);
+    order.sort((i, j) {
+      final (ai, bi) = endpoints[i];
+      final (aj, bj) = endpoints[j];
+      final di = (ai.x - bi.x).abs() + (ai.y - bi.y).abs();
+      final dj = (aj.x - bj.x).abs() + (aj.y - bj.y).abs();
+      return dj.compareTo(di);
+    });
+
+    // 3) Pose des chemins disjoints
+    final used = <Point<int>>{...blocked};
+    for (final (a, b) in endpoints) {
+      used.add(a);
+      used.add(b);
+    }
+
+    final pairs = <PairDef>[];
+    final solution = <int, List<Point<int>>>{};
+    bool ok = true;
+
+    for (final idx in order) {
+      final (a, b) = endpoints[idx];
+      final usedForPath = used.difference({a, b});
+
+      List<Point<int>>? path;
+
+      // Sur 6x6+ : BFS d’abord (stable), puis petit “drunk” si on veut varier
+      if (n >= 6) {
+        path = _bfsPath(n, a, b, usedForPath);
+        if (path == null) {
+          // backup (rare)
+          path = _drunkWalkPath(rng, n, a, b, usedForPath, spice: spice);
+        } else {
+          // si BFS trop court, on tente 1-2 walks pour rajouter un peu de forme
+          if (path.length <= ((a.x - b.x).abs() + (a.y - b.y).abs()) + 1 &&
+              rng.nextDouble() < 0.35) {
+            final alt = _drunkWalkPath(rng, n, a, b, usedForPath, spice: spice);
+            if (alt != null) path = alt;
+          }
+        }
+      } else {
+        path = _drunkWalkPath(rng, n, a, b, usedForPath, spice: spice);
+        path ??= _bfsPath(n, a, b, usedForPath);
+      }
+
+      if (path == null || !_pathIsValid(path)) {
         ok = false;
         break;
       }
+
+      final colorId = idx;
+      pairs.add(PairDef(colorId, a, b));
+      solution[colorId] = path;
+      used.addAll(path);
     }
+
     if (!ok) continue;
 
-    // Build
-    final pairs = <PairDef>[];
-    final solution = <int, List<Point<int>>>{};
+    final isFullFill = _isFullFill(n, blocked, solution);
+    if (preferFullFillNow(attempt) && !isFullFill) continue;
 
-    for (int cid = 0; cid < segs.length; cid++) {
-      pairs.add(PairDef(cid, segs[cid].first, segs[cid].last));
-      solution[cid] = segs[cid];
-    }
-
-    // sécurité : couvre tout exactement 1 fois
-    if (!_coversAllExactlyOnce(solution, n)) continue;
-
-    return LevelDef(
+    final level = LevelDef(
       n,
       pairs,
       solution,
-      blocked: const {},
-      requireFullFill: true,
+      blocked: blocked,
+      requireFullFill: isFullFill,
     );
+
+    return (level, _fingerprint(level));
   }
 
   return null;
 }
 
-/// ============================================================================
-/// Segment sizes
-/// ============================================================================
-int _minSegmentLen(int n) {
-  if (n <= 3) return 2;
-  if (n == 4) return 3;
-  if (n == 5) return 4;
-  if (n == 6) return 5;
-  if (n == 7) return 6;
-  return 7; // 8x8
-}
-
-List<int> _makeSegmentSizes(
-  Random rng, {
-  required int total,
-  required int k,
-  required int minLen,
-}) {
-  final sizes = List<int>.filled(k, minLen);
-  int rem = total - k * minLen;
-
-  // Je distribue le reste avec un peu de biais pour créer des segments longs
-  while (rem > 0) {
-    final r = rng.nextDouble();
-    final idx = (r < 0.60)
-        ? rng.nextInt(k)
-        : (r < 0.90)
-        ? _pickBiasedIndex(rng, k)
-        : rng.nextInt(k);
-    sizes[idx]++;
-    rem--;
+bool _isFullFill(
+  int n,
+  Set<Point<int>> blocked,
+  Map<int, List<Point<int>>> solution,
+) {
+  final covered = <Point<int>>{};
+  for (final seg in solution.values) {
+    covered.addAll(seg);
   }
 
-  sizes.shuffle(rng);
-  return sizes;
-}
-
-int _pickBiasedIndex(Random rng, int k) {
-  final t = rng.nextDouble();
-  if (t < 0.50) return rng.nextInt((k / 3).ceil());
-  if (t < 0.80) return k - 1 - rng.nextInt((k / 3).ceil());
-  return rng.nextInt(k);
+  int freeCount = 0;
+  for (int y = 0; y < n; y++) {
+    for (int x = 0; x < n; x++) {
+      if (!blocked.contains(Point<int>(x, y))) freeCount++;
+    }
+  }
+  return covered.length == freeCount;
 }
 
 /// ============================================================================
-/// Validations
+/// DRUNK WALK (quelques essais) + fallback BFS
 /// ============================================================================
-bool _isGridNeighbor(Point<int> a, Point<int> b) {
-  final dx = (a.x - b.x).abs();
-  final dy = (a.y - b.y).abs();
-  return (dx + dy) == 1;
+List<Point<int>>? _drunkWalkPath(
+  Random rng,
+  int n,
+  Point<int> start,
+  Point<int> goal,
+  Set<Point<int>> globalUsed, {
+  required double spice,
+}) {
+  final wander = (0.25 + spice * 0.45).clamp(0.0, 0.75);
+  final manhattan = (start.x - goal.x).abs() + (start.y - goal.y).abs();
+
+  // Fast mode sur grandes tailles
+  final int attempts = (n >= 6)
+      ? (6 + (spice * 6).round())
+      : (18 + (spice * 10).round());
+
+  List<Point<int>>? best;
+  double bestScore = -1;
+
+  for (int walk = 0; walk < attempts; walk++) {
+    final walkRng = Random(rng.nextInt(1 << 30));
+    final path = _singleDrunkWalk(
+      walkRng,
+      n,
+      start,
+      goal,
+      globalUsed,
+      wander: wander,
+      maxStepsOverride: (n >= 6) ? (n * n * 2) : null,
+    );
+    if (path == null) continue;
+
+    final twists = _countTwists(path);
+    final score = (path.length / manhattan.clamp(1, 9999)) + twists * 0.25;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = path;
+    }
+  }
+
+  best ??= _bfsPath(n, start, goal, globalUsed);
+  return best;
 }
 
-bool _isValidPath(List<Point<int>> path, int n) {
-  if (path.length != n * n) return false;
+List<Point<int>>? _singleDrunkWalk(
+  Random rng,
+  int n,
+  Point<int> start,
+  Point<int> goal,
+  Set<Point<int>> globalUsed, {
+  required double wander,
+  int? maxStepsOverride,
+}) {
+  final maxSteps = maxStepsOverride ?? (n * n * 4);
+  final maxBacktracks = (n >= 6) ? (n * n) : (n * n * 2);
+
+  // visited = globalUsed + start, mais PAS goal
+  final visited = <Point<int>>{...globalUsed, start}..remove(goal);
+
+  final path = <Point<int>>[start];
+  int backtracks = 0;
+
+  const dirs = [Point(1, 0), Point(-1, 0), Point(0, 1), Point(0, -1)];
+
+  while (path.isNotEmpty && path.length < maxSteps) {
+    final cur = path.last;
+    if (cur == goal) return path;
+
+    final free = dirs
+        .map((d) => Point<int>(cur.x + d.x, cur.y + d.y))
+        .where((p) => _inside(n, p) && !visited.contains(p))
+        .toList();
+
+    if (free.isEmpty) {
+      if (path.length <= 1 || backtracks >= maxBacktracks) return null;
+      visited.remove(path.removeLast());
+      backtracks++;
+      continue;
+    }
+
+    Point<int> next;
+
+    if (rng.nextDouble() < wander) {
+      next = free[rng.nextInt(free.length)];
+    } else {
+      free.sort((a, b) {
+        final da = (a.x - goal.x).abs() + (a.y - goal.y).abs();
+        final db = (b.x - goal.x).abs() + (b.y - goal.y).abs();
+        return da.compareTo(db);
+      });
+      final topK = free.take(2).toList();
+      next = topK[rng.nextInt(topK.length)];
+    }
+
+    path.add(next);
+    visited.add(next);
+  }
+
+  return null;
+}
+
+int _countTwists(List<Point<int>> path) {
+  if (path.length < 3) return 0;
+  int t = 0;
+  for (int i = 1; i < path.length - 1; i++) {
+    final dx1 = path[i].x - path[i - 1].x;
+    final dy1 = path[i].y - path[i - 1].y;
+    final dx2 = path[i + 1].x - path[i].x;
+    final dy2 = path[i + 1].y - path[i].y;
+    if (dx1 != dx2 || dy1 != dy2) t++;
+  }
+  return t;
+}
+
+/// ============================================================================
+/// Fingerprint — pairs + blocked, puis MIN sur 8 symétries
+/// ============================================================================
+String _fingerprint(LevelDef l) {
+  final n = l.size;
+
+  (int, int) tr((int, int) p, int sym) {
+    final (x, y) = p;
+    return switch (sym) {
+      0 => (x, y),
+      1 => (n - 1 - x, y),
+      2 => (x, n - 1 - y),
+      3 => (n - 1 - x, n - 1 - y),
+      4 => (y, x),
+      5 => (n - 1 - y, x),
+      6 => (y, n - 1 - x),
+      _ => (n - 1 - y, n - 1 - x),
+    };
+  }
+
+  String encBlocked(List<(int, int)> pts) {
+    final s = pts.toList()
+      ..sort(
+        (a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2),
+      );
+    return s.map((p) => '${p.$1},${p.$2}').join('|');
+  }
+
+  String encPairs(List<((int, int), (int, int))> prs) {
+    final norm = prs.map((ab) {
+      final a = ab.$1;
+      final b = ab.$2;
+      final aFirst = (a.$1 < b.$1) || (a.$1 == b.$1 && a.$2 <= b.$2);
+      final first = aFirst ? a : b;
+      final second = aFirst ? b : a;
+      return '${first.$1},${first.$2}-${second.$1},${second.$2}';
+    }).toList()..sort();
+    return norm.join('|');
+  }
+
+  final basePairs = l.pairs
+      .map((p) => ((p.a.x, p.a.y), (p.b.x, p.b.y)))
+      .toList();
+  final baseBlocked = l.blocked.map((p) => (p.x, p.y)).toList();
+
+  String? best;
+  for (int sym = 0; sym < 8; sym++) {
+    final trPairs = basePairs
+        .map((ab) => (tr(ab.$1, sym), tr(ab.$2, sym)))
+        .toList();
+    final trBlocked = baseBlocked.map((p) => tr(p, sym)).toList();
+
+    final e =
+        '${l.size}:${l.pairs.length}:${encPairs(trPairs)}:B:${encBlocked(trBlocked)}';
+    if (best == null || e.compareTo(best) < 0) best = e;
+  }
+  return best!;
+}
+
+/// ============================================================================
+/// Helpers
+/// ============================================================================
+int _randInt(Random rng, int min, int max) => min + rng.nextInt(max - min + 1);
+
+int _minEndpointDist(int n) {
+  // Règle dure “pas adjacents” gérée ailleurs (>=2)
+  // Ici : juste éviter les endpoints collés quand possible
+  return switch (n) {
+    3 => 2,
+    4 => 2,
+    5 => 3,
+    6 => 3,
+    7 => 4,
+    _ => 5,
+  };
+}
+
+bool _inside(int n, Point<int> p) => p.x >= 0 && p.y >= 0 && p.x < n && p.y < n;
+
+bool _isNeighbor(Point<int> a, Point<int> b) =>
+    ((a.x - b.x).abs() + (a.y - b.y).abs()) == 1;
+
+bool _pathIsValid(List<Point<int>> path) {
+  if (path.length < 2) return false;
 
   final seen = <Point<int>>{};
   for (final p in path) {
-    if (p.x < 0 || p.y < 0 || p.x >= n || p.y >= n) return false;
     if (!seen.add(p)) return false;
   }
 
   for (int i = 0; i < path.length - 1; i++) {
-    if (!_isGridNeighbor(path[i], path[i + 1])) return false;
+    if (!_isNeighbor(path[i], path[i + 1])) return false;
   }
+
   return true;
 }
 
-bool _coversAllExactlyOnce(Map<int, List<Point<int>>> solution, int n) {
-  final seen = <Point<int>>{};
-  int count = 0;
-
-  for (final seg in solution.values) {
-    for (final p in seg) {
-      count++;
-      if (!seen.add(p)) return false;
-    }
-  }
-
-  return count == n * n && seen.length == n * n;
-}
-
 /// ============================================================================
-/// Hamiltonien : Snake + Backbite (version SAFE)
+/// Endpoints
 /// ============================================================================
-List<Point<int>> _snakePath(int n) {
-  final path = <Point<int>>[];
+(Point<int>, Point<int>)? _pickEndpoints(
+  Random rng,
+  int n,
+  Set<Point<int>> used, {
+  required int minDist,
+}) {
+  final free = <Point<int>>[];
   for (int y = 0; y < n; y++) {
-    if (y.isEven) {
-      for (int x = 0; x < n; x++) path.add(Point<int>(x, y));
-    } else {
-      for (int x = n - 1; x >= 0; x--) path.add(Point<int>(x, y));
+    for (int x = 0; x < n; x++) {
+      final p = Point<int>(x, y);
+      if (!used.contains(p)) free.add(p);
     }
   }
-  return path;
+  if (free.length < 2) return null;
+
+  free.shuffle(rng);
+
+  // Essai avec minDist
+  for (int i = 0; i < min(140, free.length); i++) {
+    for (int j = i + 1; j < min(280, free.length); j++) {
+      final man = (free[i].x - free[j].x).abs() + (free[i].y - free[j].y).abs();
+      if (man >= minDist) return (free[i], free[j]);
+    }
+  }
+
+  // Fallback : plancher à 2
+  for (int i = 0; i < free.length; i++) {
+    for (int j = i + 1; j < free.length; j++) {
+      final man = (free[i].x - free[j].x).abs() + (free[i].y - free[j].y).abs();
+      if (man >= 2) return (free[i], free[j]);
+    }
+  }
+
+  return null;
 }
 
-/// Backbite correct :
-/// - Part d'un chemin Hamiltonien valide.
-/// - Applique des moves qui gardent un chemin valide.
-/// - Si quelque chose se casse (ne devrait pas), on retombe sur le snake.
-List<Point<int>> _randomHamiltonianPathBackbite(Random rng, int n) {
-  var path = _snakePath(n);
+/// ============================================================================
+/// BFS — fallback fiable (chemin le plus court)
+/// ============================================================================
+List<Point<int>>? _bfsPath(
+  int n,
+  Point<int> start,
+  Point<int> goal,
+  Set<Point<int>> blocked,
+) {
+  final eff = blocked.difference({start, goal});
+  final prev = <Point<int>, Point<int>?>{start: null};
+  final q = Queue<Point<int>>()..add(start);
 
-  final indexOf = <Point<int>, int>{};
-  void rebuildIndex() {
-    indexOf.clear();
-    for (int i = 0; i < path.length; i++) {
-      indexOf[path[i]] = i;
+  const dirs = [Point(1, 0), Point(-1, 0), Point(0, 1), Point(0, -1)];
+
+  while (q.isNotEmpty) {
+    final cur = q.removeFirst();
+    if (cur == goal) break;
+
+    for (final d in dirs) {
+      final nxt = Point<int>(cur.x + d.x, cur.y + d.y);
+      if (!_inside(n, nxt) || eff.contains(nxt) || prev.containsKey(nxt))
+        continue;
+      prev[nxt] = cur;
+      q.add(nxt);
     }
   }
 
-  rebuildIndex();
+  if (!prev.containsKey(goal)) return null;
 
-  final steps = max(4000, n * n * 900);
+  final path = <Point<int>>[];
+  Point<int>? cur = goal;
+  while (cur != null) {
+    path.add(cur);
+    cur = prev[cur];
+  }
+  return path.reversed.toList();
+}
 
-  for (int step = 0; step < steps; step++) {
-    final useHead = rng.nextBool();
-    final L = path.length - 1;
-    final end = useHead ? path[0] : path[L];
+/// ============================================================================
+/// Obstacles
+/// ============================================================================
+Set<Point<int>> _genBlocked(Random rng, int n, double spice) {
+  if (n <= 3) return {};
 
-    final candidates = <Point<int>>[
-      Point<int>(end.x + 1, end.y),
-      Point<int>(end.x - 1, end.y),
-      Point<int>(end.x, end.y + 1),
-      Point<int>(end.x, end.y - 1),
-    ].where((p) => p.x >= 0 && p.y >= 0 && p.x < n && p.y < n).toList();
+  // Sur 6x6+ : obstacles = taux d'échec énorme avec chemins disjoints => on coupe.
+  if (n >= 6) return {};
 
-    candidates.shuffle(rng);
+  final maxB = switch (n) {
+    4 => 1,
+    5 => 3,
+    _ => 0,
+  };
 
-    bool moved = false;
+  final wantCount = rng.nextDouble() < (0.35 + 0.50 * spice)
+      ? (1 + rng.nextDouble() * spice * maxB).ceil().clamp(1, maxB)
+      : 0;
 
-    for (final nb in candidates) {
-      final j = indexOf[nb];
-      if (j == null) continue;
+  final blocked = <Point<int>>{};
+  int guard = 0;
 
-      if (useHead) {
-        // head=0 ; voisin sur le chemin = 1
-        if (j == 0 || j == 1) continue;
+  while (blocked.length < wantCount && guard < 3000) {
+    guard++;
+    final p = Point<int>(rng.nextInt(n), rng.nextInt(n));
 
-        // new = reverse(path[0..j-1]) + path[j..L]
-        // mais on construit en conservant des adjacences correctes
-        final left = path.sublist(0, j).reversed.toList(); // j-1..0
-        final right = path.sublist(j); // j..L
-        path = [...left, ...right];
+    final isCorner = (p.x == 0 || p.x == n - 1) && (p.y == 0 || p.y == n - 1);
+    if (isCorner) continue;
 
-        rebuildIndex();
-        moved = true;
-        break;
-      } else {
-        // tail=L ; voisin sur le chemin = L-1
-        if (j == L || j == L - 1) continue;
+    if (blocked.any((b) => _isNeighbor(b, p))) continue;
+    if (!_gridIsConnected(n, {...blocked, p})) continue;
 
-        // new = path[0..j] + reverse(path[j+1..L])
-        final prefix = path.sublist(0, j + 1);
-        final suffix = path.sublist(j + 1).reversed.toList(); // L..j+1
-        path = [...prefix, ...suffix];
+    blocked.add(p);
+  }
 
-        rebuildIndex();
-        moved = true;
-        break;
+  return blocked;
+}
+
+bool _gridIsConnected(int n, Set<Point<int>> blocked) {
+  Point<int>? start;
+  outer:
+  for (int y = 0; y < n; y++) {
+    for (int x = 0; x < n; x++) {
+      final p = Point<int>(x, y);
+      if (!blocked.contains(p)) {
+        start = p;
+        break outer;
       }
     }
+  }
+  if (start == null) return true;
 
-    if (!moved) continue;
+  final visited = <Point<int>>{start};
+  final q = Queue<Point<int>>()..add(start);
+  const dirs = [Point(1, 0), Point(-1, 0), Point(0, 1), Point(0, -1)];
+
+  while (q.isNotEmpty) {
+    final cur = q.removeFirst();
+    for (final d in dirs) {
+      final nxt = Point<int>(cur.x + d.x, cur.y + d.y);
+      if (!_inside(n, nxt) || blocked.contains(nxt) || visited.contains(nxt))
+        continue;
+      visited.add(nxt);
+      q.add(nxt);
+    }
   }
 
-  // Safety net : jamais de chemin cassé
-  if (!_isValidPath(path, n)) return _snakePath(n);
-
-  return rng.nextBool() ? path : path.reversed.toList();
+  int freeCount = 0;
+  for (int y = 0; y < n; y++) {
+    for (int x = 0; x < n; x++) {
+      if (!blocked.contains(Point<int>(x, y))) freeCount++;
+    }
+  }
+  return visited.length == freeCount;
 }
 
 /// ============================================================================
-/// Export lib/game/data/levels.dart
+/// Export
 /// ============================================================================
 void _writeLevelsDart(List<LevelDef> levels) {
   final b = StringBuffer();
   b.writeln("import 'dart:math';");
   b.writeln("import 'package:flow_points/game/models/level.dart';");
   b.writeln("import 'package:flow_points/game/models/pair.dart';");
-  b.writeln("");
+  b.writeln();
   b.writeln("class LevelsData {");
   b.writeln("  static final levels = <Level>[");
 
@@ -392,8 +730,11 @@ void _writeLevelsDart(List<LevelDef> levels) {
     b.writeln("    Level(");
     b.writeln("      size: ${l.size},");
     b.writeln("      requireFullFill: ${l.requireFullFill},");
-    b.writeln("      blocked: <Point<int>>{},");
-
+    b.writeln("      blocked: <Point<int>>{");
+    for (final p in l.blocked) {
+      b.writeln("        Point(${p.x}, ${p.y}),");
+    }
+    b.writeln("      },");
     b.writeln("      pairs: [");
     for (final p in l.pairs) {
       b.writeln(
@@ -401,7 +742,6 @@ void _writeLevelsDart(List<LevelDef> levels) {
       );
     }
     b.writeln("      ],");
-
     b.writeln("      solution: {");
     for (final e in l.solution.entries) {
       b.write("        ${e.key}: [");
@@ -411,7 +751,6 @@ void _writeLevelsDart(List<LevelDef> levels) {
       b.writeln("],");
     }
     b.writeln("      },");
-
     b.writeln("    ),");
   }
 
